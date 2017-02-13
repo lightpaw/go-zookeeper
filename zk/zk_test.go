@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	. "github.com/onsi/gomega"
 	"io"
 	"net"
 	"strings"
@@ -126,6 +127,7 @@ func TestMulti(t *testing.T) {
 }
 
 func TestIfAuthdataSurvivesReconnect(t *testing.T) {
+	RegisterTestingT(t)
 	// This test case ensures authentication data is being resubmited after
 	// reconnect.
 	testNode := "/auth-testnode"
@@ -169,6 +171,9 @@ func TestIfAuthdataSurvivesReconnect(t *testing.T) {
 
 	ts.StopAllServers()
 	ts.StartAllServers()
+
+	// wait until reconnected
+	Eventually(zk.State, 10*time.Second).Should(Equal(StateHasSession))
 
 	_, _, err = zk.Get(testNode)
 	if err != nil {

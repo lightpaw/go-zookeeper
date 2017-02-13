@@ -96,6 +96,10 @@ type Conn struct {
 	watchersLock sync.Mutex
 	closeChan    chan struct{} // channel to tell send loop stop
 
+	sessionExpireThenQuit bool
+	mustHaveSessionTime   time.Time
+	quitOnce              sync.Once
+
 	// Debug (used by unit tests)
 	reconnectDelay time.Duration
 
@@ -249,13 +253,27 @@ func WithEventCallback(cb EventCallback) connOption {
 	}
 }
 
-func (c *Conn) Close() {
-	close(c.shouldQuit)
-
-	select {
-	case <-c.queueRequest(opClose, &closeRequest{}, &closeResponse{}, nil):
-	case <-time.After(time.Second):
+// Do not reconnect if session is expired.
+func WithSessionExpireAndQuit() connOption {
+	return func(c *Conn) {
+		c.sessionExpireThenQuit = true
 	}
+}
+
+func (c *Conn) Close() {
+	c.quitOnce.Do(func() {
+		close(c.shouldQuit)
+
+		select {
+		case <-c.queueRequest(opClose, &closeRequest{}, &closeResponse{}, nil):
+		case <-time.After(time.Second):
+		}
+	})
+}
+
+func (c *Conn) ClosedChan() <-chan struct{} {
+	// receive only. so callers cannot close or send to it
+	return c.shouldQuit
 }
 
 // State returns the current state of the connection.
@@ -326,6 +344,14 @@ func (c *Conn) connect() error {
 		}
 
 		c.logger.Printf("Failed to connect to %s: %+v", c.Server(), err)
+
+		if c.mustHaveSessionTime.After(time.Now()) {
+			// session must have expired at the server
+			c.logger.Printf("Connect passed session deadline. Considered expired. ")
+			c.setState(StateExpired)
+			c.Close()
+			return ErrSessionExpired
+		}
 	}
 }
 
@@ -447,7 +473,18 @@ func (c *Conn) loop() {
 
 		if err != ErrSessionExpired {
 			err = ErrConnectionClosed
+		} else {
+			if c.sessionExpireThenQuit {
+				// quit
+				c.Close()
+				return
+			}
 		}
+
+		if c.sessionExpireThenQuit && c.SessionID() != 0 {
+			c.mustHaveSessionTime = time.Now().Add(time.Duration(c.sessionTimeoutMs) * time.Millisecond)
+		}
+
 		c.flushRequests(err)
 
 		if c.reconnectDelay > 0 {
