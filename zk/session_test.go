@@ -70,7 +70,7 @@ func TestConn_Expire(t *testing.T) {
 	ts.Stop()
 
 	Ω(receive(eventChan, timeout)).Should(WithTransform(GetEventState, Equal(StateDisconnected)))
-	Eventually(eventChan, timeout).Should(Receive(WithTransform(GetEventState, Equal(StateExpired))))
+	Eventually(eventChan, timeout+2*time.Second).Should(Receive(WithTransform(GetEventState, Equal(StateExpired))))
 
 	Eventually(conn.shouldQuit, timeout).Should(BeClosed())
 	Eventually(conn.eventChan, 2*time.Second).Should(BeClosed())
