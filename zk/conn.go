@@ -14,6 +14,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/lightpaw/logrus"
 	"io"
 	"net"
 	"strconv"
@@ -345,7 +346,7 @@ func (c *Conn) connect() error {
 
 		c.logger.Printf("Failed to connect to %s: %+v", c.Server(), err)
 
-		if c.mustHaveSessionTime.After(time.Now()) {
+		if !c.mustHaveSessionTime.IsZero() && c.mustHaveSessionTime.Before(time.Now()) {
 			// session must have expired at the server
 			c.logger.Printf("Connect passed session deadline. Considered expired. ")
 			c.setState(StateExpired)
@@ -483,6 +484,7 @@ func (c *Conn) loop() {
 
 		if c.sessionExpireThenQuit && c.SessionID() != 0 {
 			c.mustHaveSessionTime = time.Now().Add(time.Duration(c.sessionTimeoutMs) * time.Millisecond)
+			logrus.WithField("delay", c.mustHaveSessionTime.Sub(time.Now())).Info("set reconnect expire time")
 		}
 
 		c.flushRequests(err)
