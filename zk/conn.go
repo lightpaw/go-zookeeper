@@ -14,7 +14,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/lightpaw/logrus"
 	"io"
 	"net"
 	"strconv"
@@ -272,6 +271,12 @@ func (c *Conn) Close() {
 	})
 }
 
+// For users of this lib to write their unit tests only.
+// Most likely it is used to test auto reconnection on disconnect.
+func (c *Conn) CloseCurrentConnectionForTestOnly() {
+	c.conn.Close()
+}
+
 func (c *Conn) ClosedChan() <-chan struct{} {
 	// receive only. so callers cannot close or send to it
 	return c.shouldQuit
@@ -432,6 +437,12 @@ func (c *Conn) loop() {
 			c.conn.Close()
 		case err == nil:
 			c.logger.Printf("Authenticated: id=%d, timeout=%d", c.SessionID(), c.sessionTimeoutMs)
+
+			if c.sessionExpireThenQuit && !c.mustHaveSessionTime.IsZero() {
+				// clear must have session time
+				c.mustHaveSessionTime = time.Time{}
+			}
+
 			c.hostProvider.Connected()        // mark success
 			c.closeChan = make(chan struct{}) // channel to tell send loop stop
 			reauthChan := make(chan struct{}) // channel to tell send loop that authdata has been resubmitted
@@ -483,8 +494,11 @@ func (c *Conn) loop() {
 		}
 
 		if c.sessionExpireThenQuit && c.SessionID() != 0 {
-			c.mustHaveSessionTime = time.Now().Add(time.Duration(c.sessionTimeoutMs) * time.Millisecond)
-			logrus.WithField("delay", c.mustHaveSessionTime.Sub(time.Now())).Info("set reconnect expire time")
+			if c.mustHaveSessionTime.IsZero() {
+				// authentication may return err
+				c.mustHaveSessionTime = time.Now().Add(time.Duration(c.sessionTimeoutMs) * time.Millisecond)
+				c.logger.Printf("set reconnect expire time")
+			}
 		}
 
 		c.flushRequests(err)
